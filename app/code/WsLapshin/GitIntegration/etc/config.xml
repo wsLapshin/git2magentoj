@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Store:etc/config.xsd">
+    <default>
+        <gitintegration>
+            <repo_filter>
+                <secret>123456789</secret>
+                <repo>test/test</repo>
+            </repo_filter>
+            <logging>
+                <log_file>var/log/gitintegration.log</log_file> 
+                <!-- Supported: WARNING, INFO, DEBUG-->
+                <log_level>DEBUG</log_level>
+                <csv_report>true</csv_report>
+                <csv_file>var/log/gitintegration_report.csv</csv_file>
+            </logging>
+            <request_filter>
+                <type>POST</type>
+                <event>gollum</event>
+            </request_filter>
+            <parser_filter>
+                <allowed_types>tutorial,project</allowed_types>
+                <allowed_atrs>
+                    <doctype>doctype</doctype>
+                    <sku>sku</sku>
+                    <other>foo,bazz</other>
+                </allowed_atrs>
+                <required_atrs>doctype,sku</required_atrs>
+            </parser_filter>
+        </gitintegration>
+    </default>
+</config>
