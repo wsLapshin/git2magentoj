@@ -1,27 +1,24 @@
 <?php
 namespace WsLapshin\GitIntegration\Controller\Hook;
 
-use Psr\Log\LoggerInterface;
 use Magento\Catalog\Model\Product;
+use Psr\Log\LoggerInterface;
 use Magento\Framework\App\Action\Action;
-use WsLapshin\GitIntegration\LogHandler;
+use WsLapshin\GitIntegration\Helper\LogHandler;
 use Magento\Framework\App\Action\Context;
 use Magento\Catalog\Model\ProductRepository;
 use Magento\Framework\App\CsrfAwareActionInterface;
 use Magento\Framework\App\Config\ScopeConfigInterface;
 use Magento\Framework\App\Action\HttpGetActionInterface;
 use Magento\Framework\App\Action\HttpPostActionInterface;
+use Magento\TestFramework\Event\Magento;
+use WsLapshin\GitIntegration\Helper\Text;
 
 class Update extends Action implements
                             CsrfAwareActionInterface,
                             HttpGetActionInterface,
                             HttpPostActionInterface
 {
-
-    const PARSER_UNRECOGNIZED_RESULT_KEY = '__unrecoginzed';
-
-    const PARSER_RAW_TAG_RESULT_KEY = '__tag';
-
     /** @var \Magento\Framework\App\Request */
     protected $_request;
 
@@ -39,7 +36,6 @@ class Update extends Action implements
 
     private $productRepo;
 
-
     public function __construct(
         Context $context,
         LoggerInterface $logger,
@@ -53,43 +49,32 @@ class Update extends Action implements
         $logger->pushHandler($loggerHandler);
         $this->logger = $logger;
         $this->productRepo = $productRepo;
+
+        $this->requestBody = $this->_request->getContent();
+        $this->requestJson = json_decode($this->requestBody, true);
+        $this->responseResult = $this->resultFactory->create('json');
     }
 
     public function execute()
     {
-        $this->requestBody = $this->_request->getContent();
-        $this->requestJson = json_decode($this->requestBody, true);
-        $this->responseResult = $this->resultFactory->create('json');
-
-        $requestHasErrors = $this->requestHasErrors();
-        if ($requestHasErrors) {
-            $this->logger->error($requestHasErrors['message']);
-            $this->response(['error'=>$requestHasErrors['message']], $requestHasErrors['code']);
+        if( $requestHasErrors = $this->requestHasErrors() ){
+                $this->logger->error($requestHasErrors['message']);
+                $this->response(['error'=>$requestHasErrors['message']], $requestHasErrors['code']);
         }
 
-        $documentUrl = $this->requestJson['pages'][0]['html_url'] ;
-        $document = $this->getDocument($documentUrl . ".md"); //
-        if (false === $document) {
+        $wikiUrl = $this->requestJson['pages'][0]['html_url'];
+
+        //github обновляет свои CDN не ранее чем через 5 минут. 
+        //При множественных хуках будем получать устаревшие данные
+        if(!$wikiDocument = Text::getDocumentByUrl($wikiUrl . ".md")){
             $error = 'Cant find repo url, bad hook request';
             $this->logger->error($error);
             $this->response(['error'=> $error ], 400);
-        }
+        } 
+        $this->logger->debug($wikiDocument->getText());
+        $skuGroups = $this->getTagData($wikiDocument); 
+        $updateResult = $this->updateSku($skuGroups, $wikiUrl);
 
-        $this->logger->debug($document);
-
-        $parsed = $this->parseDocument($document);
-
-        //for @debug purpose only with false flag
-        //$data = $this->getTagData($parsed, false);
-        $tags = $this->getTagData($parsed); //
-        if (empty($tags[0])) {
-            $message = 'No sku tags were found';
-            $this->logger->info($message);
-            $this->response(['success'=>$message], 200);
-        }
-
-
-        $updateResult = $this->updateSku($tags[0], $documentUrl);
         if (true !== $updateResult) {
             $error = 'Not updated. Server errors. See logs';
             $this->logger->error($error);
@@ -99,107 +84,16 @@ class Update extends Action implements
         $this->response(['success'=>'ok'], 201);
     }
 
-    private function requestHasErrors()
+    /**
+     * Отдает сгруппированные по DocType артикулы, в которые необходимо
+     * вставить ссылку на wiki-страницу
+     */
+    private function getTagData(Text $document)
     {
-        if (null === $this->requestJson) {
-            return ['message' => "Bad request. Use valid application/json", 'code'=>400];
-        }
-
-        $requestMethod = $this->_request->getMethod();
-        $allowedMethod = $this->scopeConfig->getValue('gitintegration/request_filter/type');
-        if ($requestMethod !== $allowedMethod) {
-            return ['message'=> "Method not allowed", 'code'=>405];
-        }
-
-        $requestSignature = $this->_request->getHeader('X-Hub-Signature');
-        $secret = $this->scopeConfig->getValue('gitintegration/repo_filter/secret');
-        $hash = 'sha1=' . hash_hmac("sha1", $this->requestBody, $secret);
-        //$hash = 'sha1=5e07c1ed4aacce04ee2bce0b718e4af6de7bb485'; //@debug proposes
-        if ($requestSignature !==  $hash) {
-            return ['message' => "Permission denied. Bad auth token", 'code'=>403];
-        }
-
-        if (empty($this->requestJson['pages'][0]['html_url'])) {
-            return ['message' => "Bad request. body.pages.0.html_url field is empty in request", 'code'=>400];
-        }
-        if (empty($this->requestJson['repository']['full_name'])) {
-            return ['message' => "Bad request. body.repository.full_name field is empty in request", 'code'=>400];
-        }
-
-        $requestRepo = $this->requestJson['repository']['full_name'];
-        $allowedRepo = $this->scopeConfig->getValue('gitintegration/repo_filter/repo');
-        if ($requestRepo !== $allowedRepo) {
-            return ['message' => "Permission denied. Foreign repository", 'code'=>403];
-        }
-
-        $requestEvent = $this->_request->getHeader('X-Github-Event');
-        $allowedEvent = $this->scopeConfig->getValue('gitintegration/request_filter/event');
-        if ($requestEvent !== $allowedEvent) {
-            return ['message' => "Skip event, not allowed", 'code'=>405];
-        }
-
-        return false;
-    }
-
-    private function getDocument($documentUrl)
-    {
-        //test only
-        // $documentUrl = __DIR__ . '/../../Test/document.md';
-        // $documentUrl = __DIR__ . '/../../Test/empty.md';
-
-        //@todo use curl and process http code exceptions (for bad urls given from git maybe)
-        sleep(2);
-        return file_get_contents($documentUrl);
-    }
-
-    private function parseDocument($document)
-    {
-        /** @see https://superuser.com/questions/1153239/regex-to-match-xml-comments */
-        $regExp = "/<!--[\s\S\n]*?-->/";
-        $matches = [];
-        preg_match_all($regExp, $document, $matches);
-        $documentComments = $matches[0];
-
-        $result = [];
-        foreach ($documentComments as $tag) {
-            $tmp = strtolower($tag);
-            $tmp = preg_replace('/\s/', '~', $tmp); //normalize all no-print chars to whitespaces (сейчас ~ вместо whitespaces)
-            $tmp = preg_replace('/~{1,}/', '~', $tmp); // two or more whitespaces to one
-            $tmp = preg_replace(['/<!--~*/', '/~*-->/'], ['',''], $tmp); //strip tags
-            $words = explode('~', $tmp);
-
-            // prepare array for storing info
-            $unrecognizedKey =  self::PARSER_UNRECOGNIZED_RESULT_KEY; 
-            $tagKey = self::PARSER_RAW_TAG_RESULT_KEY; 
-            $parsedTag = [];
-            $parsedTag[$unrecognizedKey] = null;
-            $parsedTag[$tagKey] = $tag;
-
-            foreach ($words as $w) {
-                if (preg_match('/^\w+:\S+$/', $w)) {
-                    $kv = explode(':', $w);
-                    $k = $kv[0];
-                    $v = $kv[1];
-                    $parsedTag[$k] = $v;
-                } else {
-                    $parsedTag[$unrecognizedKey][] = $w;
-                }
-            }
-
-            $result[] = $parsedTag;
-        }
-
-        return $result;
-    }
-
-    private function getTagData($parsed, $processOnlyFirstValidTag = true)
-    {
-        $data = [];
+        
         $skuKey = $this->scopeConfig->getValue('gitintegration/parser_filter/allowed_atrs/sku');
         $doctypeKey = $this->scopeConfig->getValue('gitintegration/parser_filter/allowed_atrs/doctype');
         $allowedAtributes = explode(',', $this->scopeConfig->getValue('gitintegration/parser_filter/allowed_atrs/other'));
-
-       
         $allowedAtributes = array_merge($allowedAtributes, [$skuKey, $doctypeKey]);
         //Exception bad config @todo
         $requiredAtributes = explode(',', $this->scopeConfig->getValue('gitintegration/parser_filter/required_atrs'));
@@ -207,18 +101,23 @@ class Update extends Action implements
         $allowedDocTypes = explode(',', $this->scopeConfig->getValue('gitintegration/parser_filter/allowed_types'));
         //Exception bad config @todo
 
+        $data = [];
+        foreach($allowedDocTypes as $dc) {
+            $data[$dc] = [];
+        }
+        $parsed = $document->parseCommentTags();
 
         foreach($parsed as $tagData) {
-            $rawTag = $tagData[self::PARSER_RAW_TAG_RESULT_KEY];
-            unset($tagData[self::PARSER_RAW_TAG_RESULT_KEY]);
+            $rawTag = $tagData[Text::PARSER_RAW_TAG_RESULT_KEY];
+            unset($tagData[Text::PARSER_RAW_TAG_RESULT_KEY]);
 
             /** Не распознанные символы */
-            if(!empty($tagData[self::PARSER_UNRECOGNIZED_RESULT_KEY])) {
+            if(!empty($tagData[Text::PARSER_UNRECOGNIZED_RESULT_KEY])) {
                 $this->logger->debug('parsed tag ' . $rawTag . ' has unrecognized symbols ' . 
-                    print_r($tagData[self::PARSER_UNRECOGNIZED_RESULT_KEY], true) );
+                    print_r($tagData[Text::PARSER_UNRECOGNIZED_RESULT_KEY], true) );
             }
             
-            unset($tagData[self::PARSER_UNRECOGNIZED_RESULT_KEY]);
+            unset($tagData[Text::PARSER_UNRECOGNIZED_RESULT_KEY]);
             $tagDataKeys = array_keys($tagData);
 
             /** Если передан тег, в котором нет хотя бы одного интересующего нас атрибута, значит этот тег нас вообще не касается */
@@ -241,7 +140,7 @@ class Update extends Action implements
 
             /** Не поддерживаемые аттрибуты */
             if( !empty( array_diff($tagDataKeys, $allowedAtributes) ) ) {
-                $this->logger->debug('parsed tag ' . $rawTag . ' has not allowed atributes ');
+                $this->logger->debug('parsed tag ' . $rawTag . ' has not-allowed atributes ');
             }
 
             /** Отсутствуют обязательные аттрибуты */
@@ -269,57 +168,115 @@ class Update extends Action implements
            
             //попытка explode sku
             $skus = explode(',', $tagData[$skuKey]);
-            $tagData['sku'] = [];
+            $doctype = $tagData[$doctypeKey];
+           
+
             foreach( $skus as $s) {
                 if( !empty($s) ) {
-                    $tagData['sku'][] = $s;
+                    if(!in_array($s, $data[$doctype])) {
+                        $data[$doctype][] = $s;
+                    }
                 } else {
                     $this->logger->debug('Empty sku was given in sku atribute, of ' .$rawTag. 'skip this data');
                 }
             }
 
-            $data[] = $tagData;
             $this->logger->info('Processed tag' . $rawTag );
             //@todo log in csv on info level
-            if($processOnlyFirstValidTag) {
-                break;
-            } 
         }
         return $data;
     }
 
-    private function updateSku($data, $documentUrl)
+    /**
+     * Вставлят в описание каждого sku в разделы skuGroups ссылку на documentUrl
+     */
+    private function updateSku($skuGroups, $wikiUrl)
     {
-        /** @var Product */
-        foreach($data['sku'] as $s) {
-            try {
-                $product = $this->productRepo->get($s, true);
-            } catch (\Exception $e) {
-                $this->logger->warning('Sku ' . $s . ' not found while updating. Skip');
-                continue;
+        foreach($skuGroups as $docType=>$skus) {
+            foreach($skus as $s) {
+                try {
+                    /** @var Product */
+                    $product = $this->productRepo->get($s, true);
+                } catch (\Exception $e) {
+                    $this->logger->warning('Sku ' . $s . ' not found while updating. Skip');
+                    continue;
+                }
+                $description = new Text($product->getData('description'));
+
+                
+                //modify text block responsible for doctype
+                if( null == $description->getBlock($docType)) {
+                    $description->addBlock($docType, $description->getLength());
+                    $oldBlockContent = "<h4 id='".$docType."'>".ucfirst($docType)."s</h4>";
+                } else {
+                    $oldBlockContent = $description->getBlockContent($docType);
+
+                    //check that link is alerady in block;
+                    if( false !== strpos($oldBlockContent, $wikiUrl) ) {
+                        continue;
+                    }
+                }
+                $linkContent = '<a href="' . $wikiUrl . '" target="_blank">'. $wikiUrl . '</a><br/>';
+                $newContent = $oldBlockContent . $linkContent;
+                $description->setBlockContent($docType, $newContent);
+               
+                //create ancors if neccessary
+                if( null == $description->getBlock('ancors')) {
+                    $description->addBlock('ancors', 0);
+                    $description->setBlockContent('ancors', '<a href="#tutorial">Tutorials</a><a href="#project" style="margin-left:25px">Projects</a>');
+                }
+
+                $descriptionResult = $description->getText();
+                $product->setData('description', $descriptionResult);
+                $this->productRepo->save($product);
             }
-            $description = $product->getData('description');
-            $description .= '<br/><a href="' . $documentUrl . '" target="_blank">'. $documentUrl .'</a>';
-            $product->setData('description', $description);
-            $this->productRepo->save($product);
         }
-       
-
-        //fetch products and their descriptions
-
-        //for Tutorials:
-        //checkTutorialsAncor - create if necessary
-        //checkTutorialsSection - create if necessary
-        //add link -> (flush)
-        //log
-
-        //for Projects:
-        //checkProjectAncor - create if necessary
-        //checkProjectSection - create if necessary
-        //add link -> (flush)
-        //log
-
         return true;
+    }
+
+    /**  */
+    private function requestHasErrors()
+    {
+        if (null === $this->requestJson) {
+            return ['message' => "Bad request. Use valid application/json", 'code'=>400];
+        }
+
+        $requestMethod = $this->_request->getMethod();
+        $allowedMethod = $this->scopeConfig->getValue('gitintegration/request_filter/type');
+        if ($requestMethod !== $allowedMethod) {
+            return ['message'=> "Method not allowed", 'code'=>405];
+        }
+
+        $requestSignature = $this->_request->getHeader('X-Hub-Signature');
+        $secret = $this->scopeConfig->getValue('gitintegration/repo_filter/secret');
+        $hash = 'sha1=' . hash_hmac("sha1", $this->requestBody, $secret);
+
+        //@debug
+        $hash = "sha1=eb01af63e51f18ead5af2c5e3d803b26e8010e42"; 
+        if ($requestSignature !==  $hash) {
+            return ['message' => "Permission denied. Bad auth token", 'code'=>403];
+        }
+
+        if (empty($this->requestJson['pages'][0]['html_url'])) {
+            return ['message' => "Bad request. body.pages.0.html_url field is empty in request", 'code'=>400];
+        }
+        if (empty($this->requestJson['repository']['full_name'])) {
+            return ['message' => "Bad request. body.repository.full_name field is empty in request", 'code'=>400];
+        }
+
+        $requestRepo = $this->requestJson['repository']['full_name'];
+        $allowedRepo = $this->scopeConfig->getValue('gitintegration/repo_filter/repo');
+        if ($requestRepo !== $allowedRepo) {
+            return ['message' => "Permission denied. Foreign repository", 'code'=>403];
+        }
+
+        $requestEvent = $this->_request->getHeader('X-Github-Event');
+        $allowedEvent = $this->scopeConfig->getValue('gitintegration/request_filter/event');
+        if ($requestEvent !== $allowedEvent) {
+            return ['message' => "Skip event, not allowed", 'code'=>405];
+        }
+
+        return false;
     }
 
     private function response($data, $code)

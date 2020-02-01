@@ -1,5 +1,5 @@
 <?php
-namespace WsLapshin\GitIntegration;
+namespace WsLapshin\GitIntegration\Helper;
 
 use Monolog\Logger;
 use Magento\Framework\Logger\Handler\Base;
