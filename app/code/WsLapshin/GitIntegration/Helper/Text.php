@@ -186,7 +186,8 @@ class Text
     {
         $document = $this->text;
         /** @see https://superuser.com/questions/1153239/regex-to-match-xml-comments */
-        $regExp = "/<!--[\s\S\n]*?-->/";
+        //$regExp = "/<!--[\s\S\n]*?-->/";
+	$regExp = "/doctype:\w+\s+sku:[\w-,]+/i";
         $matches = [];
         preg_match_all($regExp, $document, $matches);
         $documentComments = $matches[0];
@@ -196,7 +197,7 @@ class Text
             $tmp = strtolower($tag);
             $tmp = preg_replace('/\s/', '~', $tmp); //normalize all no-print chars to whitespaces (сейчас ~ вместо whitespaces)
             $tmp = preg_replace('/~{1,}/', '~', $tmp); // two or more whitespaces to one
-            $tmp = preg_replace(['/<!--~*/', '/~*-->/'], ['',''], $tmp); //strip tags
+            //$tmp = preg_replace(['/<!--~*/', '/~*-->/'], ['',''], $tmp); //strip tags
             $words = explode('~', $tmp);
 
             // prepare array for storing info

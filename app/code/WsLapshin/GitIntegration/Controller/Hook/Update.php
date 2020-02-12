@@ -66,7 +66,9 @@ class Update extends Action implements
 
         //github обновляет свои CDN не ранее чем через 5 минут. 
         //При множественных хуках будем получать устаревшие данные
-        if(!$wikiDocument = Text::getDocumentByUrl($wikiUrl . ".md")){
+        //if(!$wikiDocument = Text::getDocumentByUrl($wikiUrl . ".md")){
+	sleep(2);
+        if(!$wikiDocument = Text::getDocumentByUrl($wikiUrl)){
             $error = 'Cant find repo url, bad hook request';
             $this->logger->error($error);
             $this->response(['error'=> $error ], 400);
@@ -252,7 +254,7 @@ class Update extends Action implements
         $hash = 'sha1=' . hash_hmac("sha1", $this->requestBody, $secret);
 
         //@debug
-        $hash = "sha1=eb01af63e51f18ead5af2c5e3d803b26e8010e42"; 
+        //$hash = "sha1=eb01af63e51f18ead5af2c5e3d803b26e8010e42"; 
         if ($requestSignature !==  $hash) {
             return ['message' => "Permission denied. Bad auth token", 'code'=>403];
         }
