@@ -63,6 +63,7 @@ class Update extends Action implements
         }
 
         $wikiUrl = $this->requestJson['pages'][0]['html_url'];
+	$wikiTitle = $this->requestJson['pages'][0]['title'];
 
         //github обновляет свои CDN не ранее чем через 5 минут. 
         //При множественных хуках будем получать устаревшие данные
@@ -75,7 +76,7 @@ class Update extends Action implements
         } 
         $this->logger->debug($wikiDocument->getText());
         $skuGroups = $this->getTagData($wikiDocument); 
-        $updateResult = $this->updateSku($skuGroups, $wikiUrl);
+        $updateResult = $this->updateSku($skuGroups, $wikiUrl,$wikiTitle);
 
         if (true !== $updateResult) {
             $error = 'Not updated. Server errors. See logs';
@@ -192,7 +193,7 @@ class Update extends Action implements
     /**
      * Вставлят в описание каждого sku в разделы skuGroups ссылку на documentUrl
      */
-    private function updateSku($skuGroups, $wikiUrl)
+    private function updateSku($skuGroups, $wikiUrl, $wikiTitle)
     {
         foreach($skuGroups as $docType=>$skus) {
             foreach($skus as $s) {
@@ -218,7 +219,7 @@ class Update extends Action implements
                         continue;
                     }
                 }
-                $linkContent = '<a href="' . $wikiUrl . '" target="_blank">'. $wikiUrl . '</a><br/>';
+                $linkContent = '<a href="' . $wikiUrl . '" target="_blank">'. $wikiTitle . '</a><br/>';
                 $newContent = $oldBlockContent . $linkContent;
                 $description->setBlockContent($docType, $newContent);
                

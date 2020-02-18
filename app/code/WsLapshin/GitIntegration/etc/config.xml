@@ -4,7 +4,7 @@
         <gitintegration>
             <repo_filter>
                 <secret>123456789</secret>
-                <repo>test/test</repo>
+                <repo>ui-stc19/cinema</repo>
             </repo_filter>
             <logging>
                 <log_file>var/log/gitintegration.log</log_file> 
