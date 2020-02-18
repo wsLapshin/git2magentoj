@@ -7,11 +7,15 @@
                 <repo>ui-stc19/cinema</repo>
             </repo_filter>
             <logging>
-                <log_file>var/log/gitintegration.log</log_file> 
-                <!-- Supported: WARNING, INFO, DEBUG-->
-                <log_level>DEBUG</log_level>
+                <!-- Создать путь в файловой системе !-->
+                <cache_dir>var/log/gitintegration/cache</cache_dir>
+
                 <csv_report>true</csv_report>
-                <csv_file>var/log/gitintegration_report.csv</csv_file>
+                <csv_file>var/log/gitintegration/report.csv</csv_file>
+
+                <!-- Supported: WARNING, INFO, DEBUG-->
+                <log_level>WARNING</log_level>
+                <log_file>var/log/gitintegration/dev.log</log_file> 
             </logging>
             <request_filter>
                 <type>POST</type>
@@ -22,7 +26,7 @@
                 <allowed_atrs>
                     <doctype>doctype</doctype>
                     <sku>sku</sku>
-                    <other>foo,bazz</other>
+                    <!--<other>foo,bazz</other>-->
                 </allowed_atrs>
                 <required_atrs>doctype,sku</required_atrs>
             </parser_filter>

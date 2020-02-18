@@ -1,18 +1,19 @@
 <?php
 namespace WsLapshin\GitIntegration\Controller\Hook;
 
-use Magento\Catalog\Model\Product;
+use Exception;
 use Psr\Log\LoggerInterface;
+use Magento\Catalog\Model\Product;
 use Magento\Framework\App\Action\Action;
-use WsLapshin\GitIntegration\Helper\LogHandler;
+use Magento\TestFramework\Event\Magento;
 use Magento\Framework\App\Action\Context;
+use WsLapshin\GitIntegration\Helper\Text;
 use Magento\Catalog\Model\ProductRepository;
+use WsLapshin\GitIntegration\Helper\LogHandler;
 use Magento\Framework\App\CsrfAwareActionInterface;
 use Magento\Framework\App\Config\ScopeConfigInterface;
 use Magento\Framework\App\Action\HttpGetActionInterface;
 use Magento\Framework\App\Action\HttpPostActionInterface;
-use Magento\TestFramework\Event\Magento;
-use WsLapshin\GitIntegration\Helper\Text;
 
 class Update extends Action implements
                             CsrfAwareActionInterface,
@@ -63,12 +64,9 @@ class Update extends Action implements
         }
 
         $wikiUrl = $this->requestJson['pages'][0]['html_url'];
-	$wikiTitle = $this->requestJson['pages'][0]['title'];
-
-        //github обновляет свои CDN не ранее чем через 5 минут. 
-        //При множественных хуках будем получать устаревшие данные
-        //if(!$wikiDocument = Text::getDocumentByUrl($wikiUrl . ".md")){
-	sleep(2);
+	    $wikiTitle = $this->requestJson['pages'][0]['title'];
+        
+	    sleep(2);
         if(!$wikiDocument = Text::getDocumentByUrl($wikiUrl)){
             $error = 'Cant find repo url, bad hook request';
             $this->logger->error($error);
@@ -76,13 +74,28 @@ class Update extends Action implements
         } 
         $this->logger->debug($wikiDocument->getText());
         $skuGroups = $this->getTagData($wikiDocument); 
-        $updateResult = $this->updateSku($skuGroups, $wikiUrl,$wikiTitle);
+
+        //try to find saved document
+        $cacheFilename = Text::getCacheFilename($wikiUrl, $this->scopeConfig);
+        $cachedDocument = Text::getDocumentByUrl($cacheFilename);
+        
+        $cachedSkuGroups = [];
+        if($cachedDocument) {
+            $cachedSkuGroups = $this->getTagData($cachedDocument);
+        }
+
+        $this->deleteSku($skuGroups, $cachedSkuGroups, $wikiUrl);
+        $updateResult = $this->updateSku($skuGroups,$wikiUrl, $wikiTitle);
+
 
         if (true !== $updateResult) {
             $error = 'Not updated. Server errors. See logs';
             $this->logger->error($error);
             $this->response(['error'=> $error], 500);
         }
+
+        //save document to cache
+        $wikiDocument->persist($cacheFilename);
 
         $this->response(['success'=>'ok'], 201);
     }
@@ -190,11 +203,55 @@ class Update extends Action implements
         return $data;
     }
 
+    private function deleteSku($skuGroups, $cachedSkuGroups, $wikiUrl)
+    {
+        if( empty($cachedSkuGroups) ) {
+            return true;
+        }
+
+        $clearedLog = [];
+
+        // here goes logic of diff $skuGroups and $cachedSkuGroups
+        foreach($cachedSkuGroups as $doctype=>$cachedSkus) {
+            $newSkus = $skuGroups[$doctype];
+            $skusToClear = array_diff($cachedSkus, $newSkus);
+            foreach($skusToClear as $clearThisSku) {
+                /** @var Product */
+                try{
+                    $product = $this->productRepo->get($clearThisSku, true);
+                } catch( Exception $e) {
+                    continue;
+                }
+
+                $description = new Text($product->getData('description'));
+                if( null == $description->getBlock($doctype) ) {
+                    continue;
+                }
+                $oldBlockContent = $description->getBlockContent($doctype);
+                $escapedUrl = preg_quote($wikiUrl); 
+
+                $newBlockContent = preg_replace('~<a\s+href="'.$escapedUrl.'".*>.*<\/a>(<br\/>|)~U', "", $oldBlockContent);
+                $description->setBlockContent($doctype, $newBlockContent);
+                $product->setData('description', $description->getText());
+                $this->productRepo->save($product);
+                $clearedLog[] = $clearThisSku;
+            }
+        }
+
+        if( !empty($clearedLog)) {
+            $this->writeCSVLog('delete', $wikiUrl, $clearedLog);
+        }
+
+        return true;
+
+    }
+
     /**
      * Вставлят в описание каждого sku в разделы skuGroups ссылку на documentUrl
      */
     private function updateSku($skuGroups, $wikiUrl, $wikiTitle)
     {
+        $addedLog = [];
         foreach($skuGroups as $docType=>$skus) {
             foreach($skus as $s) {
                 try {
@@ -232,9 +289,26 @@ class Update extends Action implements
                 $descriptionResult = $description->getText();
                 $product->setData('description', $descriptionResult);
                 $this->productRepo->save($product);
+                $addedLog[] = $s;
             }
         }
+        if( !empty($addedLog)){
+            $this->writeCSVLog('add', $wikiUrl, $addedLog);
+        }
         return true;
+    }
+
+    private function writeCSVLog($operation, $url, array $skus)
+    {
+        //@todo functionality to disable csv logging in config
+
+        $path = $_SERVER['DOCUMENT_ROOT'] . "/../" . $this->scopeConfig->getValue('gitintegration/logging/csv_file');
+        $f = fopen($path, 'a+');
+        if( !$f) {
+            return false;
+        }
+        fputcsv($f, [$operation, $url, implode(",", $skus)], ";");
+        fclose($f);
     }
 
     /**  */
@@ -255,7 +329,7 @@ class Update extends Action implements
         $hash = 'sha1=' . hash_hmac("sha1", $this->requestBody, $secret);
 
         //@debug
-        //$hash = "sha1=eb01af63e51f18ead5af2c5e3d803b26e8010e42"; 
+        /** */
         if ($requestSignature !==  $hash) {
             return ['message' => "Permission denied. Bad auth token", 'code'=>403];
         }

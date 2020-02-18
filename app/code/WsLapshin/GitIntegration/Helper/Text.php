@@ -1,6 +1,9 @@
 <?php
 namespace WsLapshin\GitIntegration\Helper;
 
+use Exception;
+use Magento\Framework\App\Config\ScopeConfigInterface;
+
 /**
  * Helper methods for manipualating text strings
  */
@@ -31,6 +34,16 @@ class Text
     public function getText()
     {
         return $this->text;
+    }
+
+    public function persist($path)
+    {
+        $f = fopen($path, 'w');
+        if( !$f) {
+            return false;
+        }
+        fwrite($f, $this->getText());
+        fclose($f);
     }
 
     public function getLength()
@@ -187,7 +200,7 @@ class Text
         $document = $this->text;
         /** @see https://superuser.com/questions/1153239/regex-to-match-xml-comments */
         //$regExp = "/<!--[\s\S\n]*?-->/";
-	$regExp = "/doctype:\w+\s+sku:[\w-,]+/i";
+	    $regExp = "/doctype:\w+\s+sku:[\w-,]+/i";
         $matches = [];
         preg_match_all($regExp, $document, $matches);
         $documentComments = $matches[0];
@@ -230,10 +243,28 @@ class Text
     public static function getDocumentByUrl($documentUrl)
     {
         //@todo use curl and process http code exceptions (for bad urls given from git maybe)
-        $doc = file_get_contents($documentUrl);
+        try {
+            $doc = file_get_contents($documentUrl);
+        } catch (Exception $e) {
+            $doc = false;
+        }
+
         if (false === $doc) {
             return false;
         }
+
         return new static($doc);
     }
+
+   
+    public static function getCacheFilename($documentUrl, ScopeConfigInterface $scopeConfig)
+    {
+        $parts = explode("/", $documentUrl);
+        $cacheFileName = array_pop($parts);
+        $dir = $scopeConfig->getValue('gitintegration/logging/cache_dir');
+        $path = $_SERVER['DOCUMENT_ROOT'] . "/../" . $dir . "/" . $cacheFileName . ".html";
+        return $path;
+    }
+
+   
 } 
