@@ -37,15 +37,19 @@ class Update extends Action implements
 
     private $productRepo;
 
+    private $_directorylist;
+
     public function __construct(
         Context $context,
         LoggerInterface $logger,
         LogHandler $loggerHandler,
         ScopeConfigInterface $scopeConfig,
-        ProductRepository $productRepo 
+	ProductRepository $productRepo,
+	\Magento\Framework\App\Filesystem\DirectoryList $_directorylist
     ) {
         parent::__construct($context);
         $this->scopeConfig = $scopeConfig;
+	$this->_directorylist = $_directorylist;
         
         $logger->pushHandler($loggerHandler);
         $this->logger = $logger;
@@ -76,7 +80,7 @@ class Update extends Action implements
         $skuGroups = $this->getTagData($wikiDocument); 
 
         //try to find saved document
-        $cacheFilename = Text::getCacheFilename($wikiUrl, $this->scopeConfig);
+        $cacheFilename = Text::getCacheFilename($wikiUrl, $this->scopeConfig, $this->_directorylist);
         $cachedDocument = Text::getDocumentByUrl($cacheFilename);
         
         $cachedSkuGroups = [];
@@ -302,7 +306,7 @@ class Update extends Action implements
     {
         //@todo functionality to disable csv logging in config
 
-        $path = $_SERVER['DOCUMENT_ROOT'] . "/../" . $this->scopeConfig->getValue('gitintegration/logging/csv_file');
+        $path = $this->_directorylist->getPath('var') . "/" .  $this->scopeConfig->getValue('gitintegration/logging/csv_file');
         $f = fopen($path, 'a+');
         if( !$f) {
             return false;

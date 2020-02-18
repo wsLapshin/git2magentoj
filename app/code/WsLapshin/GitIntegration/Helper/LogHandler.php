@@ -22,7 +22,7 @@ class LogHandler extends Base
      */
     public function __construct(DriverInterface $filesystem, ScopeConfigInterface $scopeConfig)
     {
-        $logFile = $scopeConfig->getValue('gitintegration/logging/log_file');
+        $logFile = 'var/' . $scopeConfig->getValue('gitintegration/logging/log_file');
         $this->fileName = $logFile;
 
         $oClass = new \ReflectionClass('\Monolog\Logger');

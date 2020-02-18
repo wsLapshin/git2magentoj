@@ -257,12 +257,12 @@ class Text
     }
 
    
-    public static function getCacheFilename($documentUrl, ScopeConfigInterface $scopeConfig)
+    public static function getCacheFilename($documentUrl, ScopeConfigInterface $scopeConfig, \Magento\Framework\App\Filesystem\DirectoryList $_directorylist)
     {
         $parts = explode("/", $documentUrl);
         $cacheFileName = array_pop($parts);
         $dir = $scopeConfig->getValue('gitintegration/logging/cache_dir');
-        $path = $_SERVER['DOCUMENT_ROOT'] . "/../" . $dir . "/" . $cacheFileName . ".html";
+        $path =  $_directorylist->getPath('var') . "/" . $dir . "/" . $cacheFileName . ".html";
         return $path;
     }
 

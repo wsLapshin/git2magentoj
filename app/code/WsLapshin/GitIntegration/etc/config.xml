@@ -7,15 +7,15 @@
                 <repo>ui-stc19/cinema</repo>
             </repo_filter>
             <logging>
-                <!-- Создать путь в файловой системе !-->
-                <cache_dir>var/log/gitintegration/cache</cache_dir>
+                <!-- Создать путь в файловой системе с правами 775 ! относительно var-->
+		<cache_dir>log/gitintegration/cache</cache_dir>
 
                 <csv_report>true</csv_report>
-                <csv_file>var/log/gitintegration/report.csv</csv_file>
+		<csv_file>log/gitintegration/report.csv</csv_file>
 
                 <!-- Supported: WARNING, INFO, DEBUG-->
                 <log_level>WARNING</log_level>
-                <log_file>var/log/gitintegration/dev.log</log_file> 
+		<log_file>log/gitintegration/dev.log</log_file> 
             </logging>
             <request_filter>
                 <type>POST</type>
